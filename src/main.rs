@@ -8,6 +8,8 @@ use std::io;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::path::Path;
+use std::process::exit;
+use std::vec::IntoIter;
 
 const VALID_IDENT_CHARS: [char; 63] = [
     '_', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
@@ -23,8 +25,9 @@ type MacroResult = Result<CharVec, MacroError>;
 enum MacroError {
     ExpectedNArgs(usize, usize),
     InvalidArg(String),
+    UnknownCommand(String),
 
-    IoError(io::Error),
+    IoError(u32, io::Error),
 }
 
 impl Display for MacroError {
@@ -34,14 +37,15 @@ impl Display for MacroError {
                 write!(f, "Expected {expected} arguments, got {got}")
             }
             Self::InvalidArg(arg) => write!(f, "Invalid argument: `{arg}`"),
-            Self::IoError(e) => write!(f, "{e}"),
+            Self::UnknownCommand(cmd) => write!(f, "Unknown command: `{cmd}`"),
+            Self::IoError(lineno, e) => write!(f, "(at line#{lineno}) {e}"),
         }
     }
 }
 
 impl Error for MacroError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        if let Self::IoError(e) = self {
+        if let Self::IoError(_, e) = self {
             Some(e)
         } else {
             None
@@ -57,7 +61,7 @@ impl CharVec {
     /// Convert the CharVec into production-ready output.
     ///
     /// This reverts all ::Dollars and ::Percents into their chars.
-    pub fn output(self) -> String {
+    pub fn output(&self) -> String {
         self.iter()
             .map(|ch| match ch {
                 Character::Dollar => '$',
@@ -97,6 +101,15 @@ impl From<String> for CharVec {
 impl From<&String> for CharVec {
     fn from(s: &String) -> Self {
         substitute(s)
+    }
+}
+
+impl IntoIterator for CharVec {
+    type Item = Character;
+    type IntoIter = IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
@@ -208,13 +221,13 @@ impl Display for CharVec {
     }
 }
 
-// TODO: perform macro invocations
+// TODO: generalize macro invocations
 // TODO: prevent circular includes
 /// Read a file into memory and process it fully.
 ///
 /// If the file doesn't start with `$PREP enable`, returns an unmodified buffer.
 fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
-    let data = fs::read_to_string(path).map_err(MacroError::IoError)?;
+    let data = fs::read_to_string(path).map_err(|e| MacroError::IoError(line!(), e))?;
 
     let data = if let Some(d) = data.strip_prefix("$PREP enable\n") {
         substitute(&decomment(d))
@@ -224,7 +237,9 @@ fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
 
     let mut new = Vec::new();
     for line in data.split(|ch| *ch == Character::Char('\n')) {
-        if let Some(args) =
+        if line.starts_with(&CharVec::from("$PREP disable".to_string())) {
+            break;
+        } else if let Some(args) =
             line.strip_prefix(CharVec::from("$PREP include ".to_string()).as_slice())
         {
             let args = args
@@ -235,7 +250,17 @@ fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
             let mut include = include_macro(args, &mut vars)?;
             include = substitute_variables(include, &vars);
 
+            new.push(Character::Char('\n'));
             new.extend(&mut include.iter());
+        } else if let Some(args) =
+            line.strip_prefix(CharVec::from("$PREP concat ".to_string()).as_slice())
+        {
+            let args = args
+                .split(|ch| *ch == Character::Char(' '))
+                .map(|arg| CharVec(arg.to_vec()))
+                .collect();
+
+            assert!(concat_macro(args, &mut vars)?.is_empty());
         } else if let Some(args) =
             line.strip_prefix(CharVec::from("$PREP stringify ".to_string()).as_slice())
         {
@@ -257,21 +282,27 @@ fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
             let (name, args) = args.split_at(space);
 
             let name = CharVec(name.to_vec());
-            let args = CharVec(args.to_vec());
+            let args = CharVec(args.iter().skip(1).cloned().collect());
 
             let mut define = define_macro(vec![name, args], &mut vars)?;
             define = substitute_variables(define, &mut vars);
 
+            new.push(Character::Char('\n'));
             new.extend(&mut define.iter());
+        } else if let Some(cmd) = line.strip_prefix(CharVec::from("$PREP ".to_string()).as_slice())
+        {
+            return Err(MacroError::UnknownCommand(
+                CharVec(cmd.to_vec()).to_string(),
+            ));
         } else {
             let line = substitute_variables(CharVec(line.to_vec()), &vars);
 
-            new.extend(line.iter());
             new.push(Character::Char('\n'));
+            new.extend(line.iter());
         }
     }
 
-    Ok(CharVec(new.into_iter().collect()))
+    Ok(CharVec(new.into_iter().skip(1).collect()))
 }
 
 /// Find and perform variable substitutions.
@@ -280,6 +311,76 @@ fn substitute_variables(s: CharVec, vars: &Context) -> CharVec {
     vars.iter().fold(s, |s, (k, v)| {
         s.to_string().replace(&format!("%{k}%"), v).into()
     })
+}
+
+/// Execute a `concat` macro.
+fn concat_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
+    if args.len() < 2 {
+        return Err(MacroError::ExpectedNArgs(2, args.len()));
+    }
+
+    let mut args = args.into_iter();
+
+    let name = args.next().unwrap();
+    let args: CharVec = args
+        .map(|mut cv| {
+            cv.push(Character::Char(' '));
+            cv.into_iter()
+        })
+        .flatten()
+        .collect();
+
+    let args = substitute_variables(args, &vars);
+
+    let (open, close) = if let Some(open) = vars.get(&"%OPENING_STRINGIFY_DELIMITER".to_string()) {
+        if let Some(close) = vars.get(&"%CLOSING_STRINGIFY_DELIMITER".to_string()) {
+            (open.clone(), close.clone())
+        } else {
+            ("\"".to_string(), "\"".to_string())
+        }
+    } else {
+        ("\"".to_string(), "\"".to_string())
+    };
+
+    let mut rest: CharVec = open.into();
+
+    let mut i = 0;
+    while i < args.len() {
+        let ch = args[i];
+        match ch {
+            Character::Dollar => rest.push(Character::Char('$')),
+            Character::Percent => rest.push(Character::Char('%')),
+
+            Character::Char('\\') => {
+                i += 1;
+                if i < args.len() {
+                    rest.push(ch);
+                    rest.push(args[i]);
+                }
+            }
+
+            Character::Char('"') => {}
+
+            _ => rest.push(ch),
+        }
+
+        i += 1;
+    }
+
+    rest.extend::<CharVec>(close.into());
+
+    if !name.iter().all(|ch| match ch {
+        Character::Char(ch) => VALID_IDENT_CHARS.contains(ch),
+        _ => false,
+    }) {
+        return Err(MacroError::InvalidArg(name.to_string()));
+    }
+
+    let name = name.to_string();
+
+    vars.insert(name, rest.output());
+
+    Ok(CharVec(Vec::new()))
 }
 
 /// Execute an `include` macro.
@@ -299,6 +400,7 @@ fn stringify_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
         return Err(MacroError::ExpectedNArgs(2, args.len()));
     }
 
+    let name = args[0].output();
     let data: CharVec = process_file(args[1].to_string(), vars)?;
 
     let (open, close) = if let Some(open) = vars.get(&"%OPENING_STRINGIFY_DELIMITER".to_string()) {
@@ -335,18 +437,20 @@ fn stringify_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
 
     val.extend(&mut close.chars().map(Character::Char));
 
-    vars.insert(args[0].clone().output(), CharVec(val).output());
+    vars.insert(name, CharVec(val).output());
 
     Ok(CharVec(Vec::new()))
 }
 
 /// Execute a `define` macro.
 fn define_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
-    let mut args = args.into_iter();
+    if args.len() != 2 {
+        return Err(MacroError::ExpectedNArgs(2, args.len()));
+    }
 
-    // the checking for this was done in `process_file`, there is an arg[0]
+    let mut args = args.into_iter();
     let name = args.next().unwrap();
-    let args = args.next().ok_or(MacroError::ExpectedNArgs(2, 1))?;
+    let args = args.next().unwrap();
 
     if !name.iter().all(|ch| match ch {
         Character::Char(ch) => VALID_IDENT_CHARS.contains(ch),
@@ -355,7 +459,6 @@ fn define_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
         return Err(MacroError::InvalidArg(name.to_string()));
     }
 
-    // the name only contains innocuous characters, so this is perfectly safe
     let name = name.to_string();
 
     vars.insert(name, substitute_variables(args, &vars).output());
@@ -365,6 +468,20 @@ fn define_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
 
 fn main() {
     let mut vars = HashMap::new();
-    let data = process_file("main.c", &mut vars).unwrap();
-    println!("{}", data.output());
+
+    let mut args = std::env::args();
+    if let Some(file) = args.nth(1) {
+        let data = match process_file(file, &mut vars) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                exit(1);
+            }
+        };
+        
+        println!("{}", data.output());
+    } else {
+        eprintln!("No file supplied");
+        exit(1);
+    }
 }

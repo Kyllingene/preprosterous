@@ -9,10 +9,10 @@ variable substitution.
 $PREP enable
 // main.c
 
-$$ `stringify` will automatically escape quotation marks and newlines
+$$ `stringify` will automatically escape quotation marks, but if you need to
 $PREP stringify LOREM lorem.txt
-$PREP define IPSUM "consectetur \$adipiscing\$ elit"
-$PREP define LOREMIPSUM concat %LOREM%, %IPSUM%
+$PREP define IPSUM "consectetur \%adipiscing\% elit"
+$PREP concat LOREMIPSUM %LOREM%, %IPSUM%
 
 $PREP include print.c
 
@@ -46,6 +46,7 @@ The result should look like this:
 // main.c
 
 
+
 // print.c (same directory as main.c)
 // there's no `$PREP enable` line, so this won't get processed
 
@@ -55,8 +56,9 @@ void print(char *text) {
     printf("I say: %s\n", text);
 }
 
+
 int main() {
-    print("Lorem \"ipsum\" dolor sit amet, consectetur $adipiscing$ elit");
+    print("Lorem \"ipsum\" dolor sit amet, consectetur %adipiscing% elit ");
 
     return 0;
 }
@@ -69,7 +71,8 @@ Here's the full list of macros:
 - `include <file>`: Copy-pastes the contents of the file (with preprocessing).
 - `define <name> <...>`: Define a preprocessor variable.
   The arguments are strictly treated as a string.
-- `concat <name> <args...>`: Concatenate multiple arguments.
+- `concat <name> <args...>`: Concatenate multiple arguments. De-stringifies
+  each one, then re-stringifies the whole thing.
 - `stringify <name> <file>`: Loads the contents of the file into a variable,
   performing the following manipulations:
     - Quoting (by default, `"<content>"`, configure with
