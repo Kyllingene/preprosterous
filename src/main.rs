@@ -348,11 +348,9 @@ fn define_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
     let name = args.next().unwrap();
     let args = args.next().ok_or(MacroError::ExpectedNArgs(2, 1))?;
 
-    if !name.iter().all(|ch| {
-        match ch {
-            Character::Char(ch) => VALID_IDENT_CHARS.contains(ch),
-            _ => false
-        }
+    if !name.iter().all(|ch| match ch {
+        Character::Char(ch) => VALID_IDENT_CHARS.contains(ch),
+        _ => false,
     }) {
         return Err(MacroError::InvalidArg(name.to_string()));
     }
