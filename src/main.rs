@@ -226,7 +226,7 @@ impl Display for CharVec {
 /// Read a file into memory and process it fully.
 ///
 /// If the file doesn't start with `$PREP enable`, returns an unmodified buffer.
-fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
+fn process_file(path: impl AsRef<Path>, vars: &mut Context) -> MacroResult {
     let data = fs::read_to_string(path).map_err(|e| MacroError::IoError(line!(), e))?;
 
     let data = if let Some(d) = data.strip_prefix("$PREP enable\n") {
@@ -247,8 +247,8 @@ fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
                 .map(|arg| CharVec(arg.to_vec()))
                 .collect();
 
-            let mut include = include_macro(args, &mut vars)?;
-            include = substitute_variables(include, &vars);
+            let mut include = include_macro(args, vars)?;
+            include = substitute_variables(include, vars);
 
             new.push(Character::Char('\n'));
             new.extend(&mut include.iter());
@@ -260,7 +260,7 @@ fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
                 .map(|arg| CharVec(arg.to_vec()))
                 .collect();
 
-            assert!(concat_macro(args, &mut vars)?.is_empty());
+            assert!(concat_macro(args, vars)?.is_empty());
         } else if let Some(args) =
             line.strip_prefix(CharVec::from("$PREP stringify ".to_string()).as_slice())
         {
@@ -269,7 +269,7 @@ fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
                 .map(|arg| CharVec(arg.to_vec()))
                 .collect();
 
-            assert!(stringify_macro(args, &mut vars)?.is_empty());
+            assert!(stringify_macro(args, vars)?.is_empty());
         } else if let Some(args) =
             line.strip_prefix(CharVec::from("$PREP define ".to_string()).as_slice())
         {
@@ -284,8 +284,8 @@ fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
             let name = CharVec(name.to_vec());
             let args = CharVec(args.iter().skip(1).cloned().collect());
 
-            let mut define = define_macro(vec![name, args], &mut vars)?;
-            define = substitute_variables(define, &mut vars);
+            let mut define = define_macro(vec![name, args], vars)?;
+            define = substitute_variables(define, vars);
 
             new.push(Character::Char('\n'));
             new.extend(&mut define.iter());
@@ -295,7 +295,7 @@ fn process_file(path: impl AsRef<Path>, mut vars: &mut Context) -> MacroResult {
                 CharVec(cmd.to_vec()).to_string(),
             ));
         } else {
-            let line = substitute_variables(CharVec(line.to_vec()), &vars);
+            let line = substitute_variables(CharVec(line.to_vec()), vars);
 
             new.push(Character::Char('\n'));
             new.extend(line.iter());
@@ -323,14 +323,13 @@ fn concat_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
 
     let name = args.next().unwrap();
     let args: CharVec = args
-        .map(|mut cv| {
+        .flat_map(|mut cv| {
             cv.push(Character::Char(' '));
             cv.into_iter()
         })
-        .flatten()
         .collect();
 
-    let args = substitute_variables(args, &vars);
+    let args = substitute_variables(args, vars);
 
     let (open, close) = if let Some(open) = vars.get(&"%OPENING_STRINGIFY_DELIMITER".to_string()) {
         if let Some(close) = vars.get(&"%CLOSING_STRINGIFY_DELIMITER".to_string()) {
@@ -461,7 +460,7 @@ fn define_macro(args: Vec<CharVec>, vars: &mut Context) -> MacroResult {
 
     let name = name.to_string();
 
-    vars.insert(name, substitute_variables(args, &vars).output());
+    vars.insert(name, substitute_variables(args, vars).output());
 
     Ok(CharVec(Vec::new()))
 }
@@ -478,7 +477,7 @@ fn main() {
                 exit(1);
             }
         };
-        
+
         println!("{}", data.output());
     } else {
         eprintln!("No file supplied");
