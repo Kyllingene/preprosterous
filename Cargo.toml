@@ -11,6 +11,7 @@ license = "mit"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+prep = { "path" = "preposterous_lib", package = "preposterous_lib"}
 
 [[bin]]
 name = "prep"

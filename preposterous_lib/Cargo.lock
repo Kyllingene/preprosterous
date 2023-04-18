@@ -5,10 +5,3 @@ version = 3
 [[package]]
 name = "preposterous_lib"
 version = "0.1.0"
-
-[[package]]
-name = "preprosterous"
-version = "0.1.0"
-dependencies = [
- "preposterous_lib",
-]

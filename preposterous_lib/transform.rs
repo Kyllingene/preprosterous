@@ -1,4 +1,7 @@
-use crate::{types::Context, character::{Character, CharVec}};
+use crate::{
+    character::{CharVec, Character},
+    types::Context,
+};
 
 /// All the valid variable ident characters `/[_a-zA-Z0-9]/`.
 pub const VALID_IDENT_CHARS: [char; 63] = [

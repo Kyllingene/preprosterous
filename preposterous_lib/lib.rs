@@ -8,7 +8,7 @@ pub mod macros;
 pub mod transform;
 pub mod types;
 
-use character::{Character, CharVec};
+use character::{CharVec, Character};
 use macros::*;
 use transform::{decomment, substitute, substitute_variables};
 use types::{Context, MacroError, MacroResult};
@@ -16,17 +16,9 @@ use types::{Context, MacroError, MacroResult};
 /// Re-exports the types required to run preposterous.
 pub mod prelude {
     pub use crate::{
-        types::{
-            Context,
-            MacroError,
-        },
-
-        character::{
-            Character,
-            CharVec,
-        },
-
+        character::{CharVec, Character},
         process_file,
+        types::{Context, MacroError},
     };
 }
 

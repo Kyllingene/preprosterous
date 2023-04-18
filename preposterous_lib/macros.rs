@@ -1,9 +1,9 @@
 //! The module containing the macro definitions.
-//! 
+//!
 //! *WARNING:* EVERYTHING in this module gets `use`d in lib.rs.
 
 use crate::{
-    character::{Character, CharVec},
+    character::{CharVec, Character},
     transform,
     types::{Context, MacroError, MacroResult},
 };
